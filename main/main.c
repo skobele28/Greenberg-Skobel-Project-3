@@ -1,22 +1,26 @@
 #include "freertos/FreeRTOS.h"
+#include <freertos/task.h>
+#include <sys/time.h>
+#include <hd44780.h>
+#include <esp_idf_lib_helpers.h>
+#include <inttypes.h>
+#include <stdio.h>
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 
-#define PSEAT_PIN  GPIO_NUM_4       // passenger seat button pin 4
+#define PSEAT_PIN  GPIO_NUM_7       // passenger seat button pin 7
 #define DSEAT_PIN  GPIO_NUM_5       // driver seat button pin 5
-#define PBELT_PIN  GPIO_NUM_6       // passenger belt switch pin 6
-#define DBELT_PIN  GPIO_NUM_7       // driver belt switch pin 7
-#define IGNITION_BUTTON  GPIO_NUM_8 // ignition button pin 8
-#define READY_LED  GPIO_NUM_10      // ready LED pin 10
-#define SUCCESS_LED  GPIO_NUM_11    // success LED pin 11
-#define ALARM_PIN GPIO_NUM_12       // alarm pin 12
-#define HEADLIGHT_LED GPIO_NUM_13   // headlight LED pin 13
-#define HIGHBEAM_CONTROL   GPIO_NUM_14  // high beam control (switch) pin 14
-#define HIGHBEAM_LED       GPIO_NUM_2   // high beam LED pin 2
-#define HEADLIGHT_ADC     ADC_CHANNEL_8 // headlight control (potentiometer) ADC1 channel 8
-#define LDR_SENSOR      ADC_CHANNEL_0   // LDR sensor (auto headlight) ADC1 channel 0
+#define PBELT_PIN  GPIO_NUM_15       // passenger belt switch pin 15
+#define DBELT_PIN  GPIO_NUM_6       // driver belt switch pin 6
+#define IGNITION_BUTTON  GPIO_NUM_4 // ignition button pin 4
+#define READY_LED  GPIO_NUM_20      // ready LED pin 20
+#define SUCCESS_LED  GPIO_NUM_19    // success LED pin 19
+#define ALARM_PIN GPIO_NUM_18       // alarm pin 18
+#define WIPER_CONTROL     ADC_CHANNEL_8 // headlight control (potentiometer) ADC1 channel 8
+#define INT_WIPER_CONTROL      ADC_CHANNEL_9   // LDR sensor (auto headlight) ADC1 channel 0
 #define ADC_ATTEN       ADC_ATTEN_DB_12 // set ADC attenuation
 #define BITWIDTH        ADC_BITWIDTH_12 // set ADC bitwidth
+#define WIPER_MOTOR     GPIO_NUM_16
 
 
 bool dseat = false;  //Detects when the driver is seated 
@@ -115,6 +119,22 @@ void app_main(void)
     adc_cali_create_scheme_curve_fitting                // Populate cal handle
     (&cali_config, &adc1_cali_chan_handle);
 
+    hd44780_t lcd =
+    {
+        .write_cb = NULL,
+        .font = HD44780_FONT_5X8,
+        .lines = 2,
+        .pins = {
+            .rs = GPIO_NUM_39,
+            .e  = GPIO_NUM_40,
+            .d4 = GPIO_NUM_41,
+            .d5 = GPIO_NUM_42,
+            .d6 = GPIO_NUM_2,
+            .d7 = GPIO_NUM_1,
+            .bl = HD44780_NOT_USED
+        }
+    };
+
     while (1){
         
         adc_oneshot_read
@@ -204,6 +224,9 @@ void app_main(void)
 
         // if iginition successful, set low beams according to potentiometer
         if(executed == 2){
+            hd44780_gotoxy(&lcd, 0, 0);
+            hd44780_puts(&lcd, "Wipers: ");
+
             // if potentiometer set to off, set low beam leds to off, set lowbeam = 0
             if(adc_mV < 1000){
                 gpio_set_level(HEADLIGHT_LED,0);

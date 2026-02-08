@@ -13,5 +13,6 @@
     "--background-index",
     "--query-driver=**",
     "--compile-commands-dir=/Users/erika/esp/Greenberg-Skobel Project 3/build"
-  ]
+  ],
+  "idf.flashType": "UART"
 }
