@@ -1,8 +1,8 @@
 #include "freertos/FreeRTOS.h"
 #include <freertos/task.h>
 #include <sys/time.h>
-#include <hd44780.h>
-#include <esp_idf_lib_helpers.h>
+#include "../managed_components/esp-idf-lib__hd44780/hd44780.h"
+#include "../managed_components/esp-idf-lib__esp_idf_lib_helpers/esp_idf_lib_helpers.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include "driver/gpio.h"
@@ -31,16 +31,15 @@ bool ignition = false; //Detects when the ignition is turned on
 int executed = 0; //keep track of print statements
 int ready_led = 0; //keep track of whether ready_led should be on or off
 int ignition_off = 0; // keep track of whether the ignition can be turned off
-int lowbeam = 0;    // keep track of low beam status
-int highbeam = 0;   // keep track of high beam control
+int wiper = 0;    // keep track of wiper status
 
 void app_main(void)
 {
 
-    int adc_bits;                       // potentiometer ADC reading (bits)
-    int adc_mV;                         // potentiometer ADC reading (mV)
-    int ldr_adc_bits;                   // LDR ADC reading (bits)
-    int ldr_adc_mV;                     // LDR ADC reading (mV)
+    int wiper_adc_bits;                       // potentiometer ADC reading (bits)
+    int wiper_adc_mV;                         // potentiometer ADC reading (mV)
+    int int_wiper_adc_bits;                   // LDR ADC reading (bits)
+    int int_wiper_adc_mV;                     // LDR ADC reading (mV)
 
 
     // set driver seat pin config to input and internal pullup
@@ -80,19 +79,6 @@ void app_main(void)
     gpio_reset_pin(ALARM_PIN);
     gpio_set_direction(ALARM_PIN, GPIO_MODE_OUTPUT);
 
-    // set headlight pin config to output, level 0
-    gpio_reset_pin(HEADLIGHT_LED);
-    gpio_set_direction(HEADLIGHT_LED, GPIO_MODE_OUTPUT);
-
-    // set high beam control pin config to input and internal pullup
-    gpio_reset_pin(HIGHBEAM_CONTROL);
-    gpio_set_direction(HIGHBEAM_CONTROL, GPIO_MODE_INPUT);
-    gpio_pullup_en(HIGHBEAM_CONTROL);
-
-    // set high beam led pin config to output, level 0
-    gpio_reset_pin(HIGHBEAM_LED);
-    gpio_set_direction(HIGHBEAM_LED, GPIO_MODE_OUTPUT);
-
     adc_oneshot_unit_init_cfg_t init_config1 = {
         .unit_id = ADC_UNIT_1,
     };                                                  // Unit configuration
@@ -104,14 +90,14 @@ void app_main(void)
         .bitwidth = BITWIDTH
     };                                                  // Channel config
     adc_oneshot_config_channel                          // Configure channel
-    (adc1_handle, HEADLIGHT_ADC, &config);
+    (adc1_handle, WIPER_CONTROL, &config);
 
     adc_oneshot_config_channel
-    (adc1_handle, LDR_SENSOR, &config);
+    (adc1_handle, INT_WIPER_CONTROL, &config);
 
     adc_cali_curve_fitting_config_t cali_config = {
         .unit_id = ADC_UNIT_1,
-        .chan = HEADLIGHT_ADC,
+        .chan = WIPER_CONTROL,
         .atten = ADC_ATTEN,
         .bitwidth = BITWIDTH
     };                                                  // Calibration config
@@ -138,16 +124,16 @@ void app_main(void)
     while (1){
         
         adc_oneshot_read
-        (adc1_handle, HEADLIGHT_ADC, &adc_bits);              // Read ADC bits (potentiometer)
+        (adc1_handle, WIPER_CONTROL, &wiper_adc_bits);              // Read ADC bits (potentiometer)
         
         adc_cali_raw_to_voltage
-        (adc1_cali_chan_handle, adc_bits, &adc_mV);         // Convert to mV (potentiometer)
+        (adc1_cali_chan_handle, wiper_adc_bits, &wiper_adc_mV);         // Convert to mV (potentiometer)
 
         adc_oneshot_read
-        (adc1_handle, LDR_SENSOR, &ldr_adc_bits);           // Read ADC bits (LDR)
+        (adc1_handle, INT_WIPER_CONTROL, &int_wiper_adc_bits);           // Read ADC bits (LDR)
         
         adc_cali_raw_to_voltage
-        (adc1_cali_chan_handle, ldr_adc_bits, &ldr_adc_mV); // Convert to mV (LDR)
+        (adc1_cali_chan_handle, int_wiper_adc_bits, &int_wiper_adc_mV); // Convert to mV (LDR)
 
 
         // Task Delay to prevent watchdog
@@ -159,7 +145,6 @@ void app_main(void)
         dbelt = gpio_get_level(DBELT_PIN)==0;
         pbelt = gpio_get_level(PBELT_PIN)==0;
         ignition = gpio_get_level(IGNITION_BUTTON)==0;
-        highbeam = gpio_get_level(HIGHBEAM_CONTROL)==0;
 
         // if the driver seat button is pressed, print the welcome message once
         if (dseat){
@@ -226,49 +211,50 @@ void app_main(void)
         if(executed == 2){
             hd44780_gotoxy(&lcd, 0, 0);
             hd44780_puts(&lcd, "Wipers: ");
-
             // if potentiometer set to off, set low beam leds to off, set lowbeam = 0
-            if(adc_mV < 1000){
-                gpio_set_level(HEADLIGHT_LED,0);
+            if(wiper_adc_mV < 450){
+                hd44780_gotoxy(&lcd, 8, 0);
+                hd44780_puts(&lcd, "OFF");
+                //gpio_set_level(HEADLIGHT_LED,0);
                 // gpio_set_level(HIGHBEAM_LED, 0);
-                lowbeam = 0;
+                wiper = 0;
             }
             // if potentiometer set to auto, use LDR to determine led high/low
-            else if(adc_mV >= 1000 && adc_mV < 2250){
+            else if(wiper_adc_mV >= 450 && wiper_adc_mV < 1500){
+                hd44780_gotoxy(&lcd, 8, 0);
+                hd44780_puts(&lcd, "INT");
+                wiper = 1;
                 // if LDR high mV (daylight) for 2s, turn off low beams, set lowbeam = 0
-                if (ldr_adc_mV > 2000 && lowbeam == 1){
-                    vTaskDelay(2000/portTICK_PERIOD_MS);
-                    if(ldr_adc_mV > 2000){
-                        gpio_set_level(HEADLIGHT_LED, 0);
-                        lowbeam = 0;
+                if (int_wiper_adc_mV < 920){
+                    
                     }
-                }
+                
                 // if LDR low mV (dusk/night) for 1s, turn on low beams, set lowbeam = 1
-                else if (ldr_adc_mV < 1550 && lowbeam == 0){
-                    vTaskDelay(1000 / portTICK_PERIOD_MS);
-                    if (ldr_adc_mV < 1550){
-                        gpio_set_level(HEADLIGHT_LED, 1);
-                        lowbeam = 1;
+                else if (int_wiper_adc_mV >= 920 && int_wiper_adc_mV < 1820){
+
                         }
                         
+                else if (int_wiper_adc_mV >= 1820){
+
+                        }
+                
                     }
                 }
             // if potentiometer set to on, turn on low beams, set lowbeam = 1
-            else if(adc_mV >= 2250){
-                gpio_set_level(HEADLIGHT_LED,1);
-                lowbeam = 1;
+            else if(wiper_adc_mV >= 1500 && wiper_adc_mV < 2450){
+                hd44780_gotoxy(&lcd, 8, 0);
+                hd44780_puts(&lcd, "LOW");
+                wiper = 1;
             }
+
+            else if(wiper_adc_mV >= 2450){
+                hd44780_gotoxy(&lcd, 8, 0);
+                hd44780_puts(&lcd, "HIGH");
+                wiper = 1;
                             
         }
 
-        // if lowbeam on and highbeam switch activated, turn on high beams
-        if (lowbeam == 1 && highbeam && executed == 2){
-            gpio_set_level(HIGHBEAM_LED, 1);
-        }
-        // otherwise, turn high beams off
-        else{
-            gpio_set_level(HIGHBEAM_LED, 0);
-        }
+
 
         // if ignition is successfully started and then ignition is released, set ignition_off = 1
         if (executed == 2 && ignition == false){
@@ -278,8 +264,6 @@ void app_main(void)
         // if ignition_off = 1 and inition is pressed, turn off all LEDs
         if (ignition_off==1 && ignition == true){
             gpio_set_level(SUCCESS_LED,0);          // turn off ignition
-            gpio_set_level(HEADLIGHT_LED,0);        // turn off headlight
-            gpio_set_level(HIGHBEAM_LED, 0);        // turn off high beams
             executed = 3;                           // set executed = 3 to keep LEDs off
         }
     }
